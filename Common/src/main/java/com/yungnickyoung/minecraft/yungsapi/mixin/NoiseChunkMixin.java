@@ -43,8 +43,14 @@ public abstract class NoiseChunkMixin implements AquiferOverrideMaskSupplier {
     @Final
     private NoiseSettings noiseSettings;
 
+    /**
+     * Per-NoiseChunk mask so the BitSet is collected with this chunk.
+     * A per-instance ThreadLocal leaked ~12 KB entries on long-lived worldgen threads
+     * (e.g. Repurposed Structures AsyncLocator) because {@code ThreadLocal#remove} was never called.
+     * Volatile + DCL keeps lazy init safe if the same NoiseChunk is touched from multiple threads (C2ME).
+     */
     @Unique
-    private ThreadLocal<AquiferOverrideMask> aquiferOverrideMask = new ThreadLocal<>();
+    private volatile AquiferOverrideMask aquiferOverrideMask;
 
     @Unique
     private BlockState defaultBlockState;
@@ -80,9 +86,15 @@ public abstract class NoiseChunkMixin implements AquiferOverrideMaskSupplier {
     @Unique
     @Override
     public AquiferOverrideMask getOrCreateAquiferOverrideMask(Supplier<AquiferOverrideMask> aquiferOverrideMaskSupplier) {
-        if (this.aquiferOverrideMask.get() == null) {
-            this.aquiferOverrideMask.set(aquiferOverrideMaskSupplier.get());
+        AquiferOverrideMask mask = this.aquiferOverrideMask;
+        if (mask == null) {
+            synchronized (this) {
+                mask = this.aquiferOverrideMask;
+                if (mask == null) {
+                    this.aquiferOverrideMask = mask = aquiferOverrideMaskSupplier.get();
+                }
+            }
         }
-        return this.aquiferOverrideMask.get();
+        return mask;
     }
 }
